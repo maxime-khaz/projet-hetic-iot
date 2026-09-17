@@ -1,0 +1,25 @@
+# Environnements virtuels Python
+.hetic/
+.venv/
+venv/
+
+# Fichiers Python générés
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Configuration locale et secrets
+.env
+.env.*
+!.env.example
+
+# Données et fichiers générés
+checkpoints/
+data-lake/
+logs/
+*.log
+
+# Fichiers système
+.DS_Store
+Thumbs.db
