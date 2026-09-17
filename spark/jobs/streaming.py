@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pymongo import MongoClient, UpdateOne
 from pyspark.sql import SparkSession
 
+from aggregates import start_aggregates
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,7 +65,7 @@ def validate_message(raw):
         timestamp / 1000, tz=timezone.utc
     )
 
-    # Une représentation stable des quatre champs métier.
+    # Identifiant stable calculé à partir des quatre champs métier.
     canonical = json.dumps(
         {
             "capteur_id": sensor,
@@ -75,7 +77,9 @@ def validate_message(raw):
         separators=(",", ":"),
         allow_nan=False,
     )
-    identifier = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    identifier = hashlib.sha256(
+        canonical.encode("utf-8")
+    ).hexdigest()
 
     return {
         "_id": identifier,
@@ -112,6 +116,7 @@ def save_batch(batch, batch_id):
                 "received_at": received_at,
                 "kafka": position,
             }
+
             rejected.append(
                 UpdateOne(
                     {"_id": identifier},
@@ -146,8 +151,11 @@ def save_batch(batch, batch_id):
             database.mesures_brutes.bulk_write(
                 measurements, ordered=False
             )
+
         if rejected:
-            database.dlq.bulk_write(rejected, ordered=False)
+            database.dlq.bulk_write(
+                rejected, ordered=False
+            )
 
     logger.info(
         "Batch %s enregistré : %s messages valides, %s rejets",
@@ -162,6 +170,7 @@ def main():
         SparkSession.builder
         .appName("iot-ingestion")
         .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.sql.shuffle.partitions", "6")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("WARN")
@@ -183,7 +192,8 @@ def main():
         )
     )
 
-    query = (
+    # Premier traitement : mesures brutes et messages invalides.
+    ingestion_query = (
         messages.writeStream
         .queryName("iot-ingestion")
         .foreachBatch(save_batch)
@@ -195,7 +205,19 @@ def main():
         .start()
     )
 
-    query.awaitTermination()
+    # Deuxième traitement : statistiques par fenêtre.
+    aggregation_query = start_aggregates(
+        spark, messages, validate_message
+    )
+
+    logger.info(
+        "Traitements démarrés : %s et %s",
+        ingestion_query.name,
+        aggregation_query.name,
+    )
+
+    # Une erreur dans l'un des traitements doit être remontée.
+    spark.streams.awaitAnyTermination()
 
 
 if __name__ == "__main__":
