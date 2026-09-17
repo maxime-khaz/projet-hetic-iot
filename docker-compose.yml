@@ -47,6 +47,16 @@ services:
     restart: unless-stopped
     networks: [iot-net]
 
+  service-producer:
+    build: ./producer
+    environment:
+      KAFKA_BOOTSTRAP: service-kafka:9092
+    depends_on:
+      service-kafka:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [iot-net]
+
 volumes:
   kafka-data:
   mongo-data:
