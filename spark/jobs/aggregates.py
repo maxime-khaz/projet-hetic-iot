@@ -6,6 +6,8 @@ from pymongo import MongoClient, UpdateOne
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+from anomalies import detect_anomalies, ensure_alert_indexes
+
 
 logger = logging.getLogger("iot-aggregates")
 
@@ -25,9 +27,15 @@ MEASUREMENT_SCHEMA = T.StructType([
 
 def ensure_indexes():
     with MongoClient(
-        MONGO_URL, serverSelectionTimeoutMS=10000
+        MONGO_URL,
+        serverSelectionTimeoutMS=10000,
     ) as client:
-        collection = client.get_default_database().agregats
+        database = client.get_default_database()
+
+        # Index nécessaires à la gestion des alertes.
+        ensure_alert_indexes(database)
+
+        collection = database.agregats
 
         collection.create_index(
             [
@@ -51,6 +59,7 @@ def ensure_indexes():
 
 def save_aggregates(batch, batch_id):
     operations = []
+    documents = []
 
     for row in batch.toLocalIterator():
         start = datetime.fromtimestamp(
@@ -76,6 +85,8 @@ def save_aggregates(batch, batch_id):
             "nb_mesures": row["nb_mesures"],
         }
 
+        documents.append(document)
+
         operations.append(
             UpdateOne(
                 business_key,
@@ -90,11 +101,20 @@ def save_aggregates(batch, batch_id):
     with MongoClient(
         MONGO_URL,
         serverSelectionTimeoutMS=10000,
+        connectTimeoutMS=10000,
         socketTimeoutMS=30000,
     ) as client:
-        client.get_default_database().agregats.bulk_write(
+        database = client.get_default_database()
+
+        # Enregistrer toutes les fenêtres avant de chercher
+        # les références utilisées pour les anomalies.
+        database.agregats.bulk_write(
             operations, ordered=False
         )
+
+        # Une erreur ici fait échouer le lot :
+        # Spark pourra le rejouer depuis son checkpoint.
+        detect_anomalies(database, documents)
 
     logger.info(
         "Agrégats batch %s : %s fenêtres enregistrées",
@@ -106,7 +126,7 @@ def save_aggregates(batch, batch_id):
 def start_aggregates(spark, messages, validator):
     ensure_indexes()
 
-    # Réutiliser exactement les mêmes règles que l'ingestion.
+    # Réutiliser les mêmes règles de validation que l'ingestion.
     def parse_valid_message(raw):
         try:
             document = validator(raw)
@@ -122,7 +142,8 @@ def start_aggregates(spark, messages, validator):
         )
 
     parse_message = F.udf(
-        parse_valid_message, MEASUREMENT_SCHEMA
+        parse_valid_message,
+        MEASUREMENT_SCHEMA,
     )
 
     valid = (
@@ -132,7 +153,7 @@ def start_aggregates(spark, messages, validator):
         .select("mesure.*")
     )
 
-    # Garder un état de dédoublonnage limité par le watermark.
+    # Éliminer les doublons avec un état limité par le watermark.
     unique = (
         valid
         .withWatermark("event_time", "1 minute")
