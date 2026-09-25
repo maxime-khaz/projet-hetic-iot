@@ -57,6 +57,29 @@ services:
     restart: unless-stopped
     networks: [iot-net]
 
+  service-airflow:
+    build: ./airflow
+    init: true
+    command: standalone
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      AIRFLOW_HOME: /opt/airflow/state
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/state/airflow.db
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "false"
+      MONGO_URL: mongodb://service-db:27017/iot
+    volumes:
+      - airflow-data:/opt/airflow/state
+      - data-lake:/opt/airflow/data-lake
+    depends_on:
+      service-db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [iot-net]
+
   service-spark:
     build: ./spark
     init: true
@@ -78,6 +101,8 @@ volumes:
   kafka-data:
   mongo-data:
   spark-checkpoints:
+  airflow-data:
+  data-lake:
 
 networks:
   iot-net:
