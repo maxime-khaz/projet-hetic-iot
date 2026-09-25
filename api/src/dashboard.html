@@ -1,0 +1,91 @@
+﻿<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Plateforme IoT</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 30px; background: #f4f6f8; color: #17202a; }
+    h1 { color: #123b5d; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .card { background: white; padding: 18px; border-radius: 10px; box-shadow: 0 2px 8px #0002; }
+    .value { font-size: 28px; font-weight: bold; color: #13795b; }
+    table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; }
+    th, td { padding: 9px; border-bottom: 1px solid #ddd; text-align: left; }
+    th { background: #123b5d; color: white; }
+    .active { color: #b42318; font-weight: bold; }
+    #status { margin: 12px 0; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Dashboard IoT</h1>
+  <div id="status">Chargement...</div>
+
+  <div class="grid">
+    <div class="card"><h3>Capteurs</h3><div id="capteurs" class="value">-</div></div>
+    <div class="card"><h3>Alertes actives</h3><div id="alertes" class="value">-</div></div>
+    <div class="card"><h3>Consolidations</h3><div id="consolidations" class="value">-</div></div>
+  </div>
+
+  <h2>Dernières mesures</h2>
+  <table>
+    <thead><tr><th>Capteur</th><th>Type</th><th>Valeur</th><th>Date</th></tr></thead>
+    <tbody id="mesures"></tbody>
+  </table>
+
+  <h2>Alertes actives</h2>
+  <table>
+    <thead><tr><th>Capteur</th><th>Type</th><th>Détection</th><th>Statut</th></tr></thead>
+    <tbody id="table-alertes"></tbody>
+  </table>
+
+<script>
+async function getJson(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(url + " : " + response.status);
+  return response.json();
+}
+
+async function charger() {
+  try {
+    const capteurs = await getJson("/api/capteurs");
+    const alertes = await getJson("/api/alertes?statut=active&page_size=100");
+    const consolidations = await getJson("/api/consolidations?page_size=100");
+
+    document.querySelector("#capteurs").textContent = capteurs.length;
+    document.querySelector("#alertes").textContent = alertes.items.length;
+    document.querySelector("#consolidations").textContent = consolidations.items.length;
+
+    const mesures = [];
+    capteurs.forEach(c => {
+      Object.entries(c.dernieres_mesures || {}).forEach(([type, mesure]) => {
+        if (mesure) mesures.push({
+          capteur: c.capteur_id, type, valeur: mesure.valeur,
+          date: mesure.event_time
+        });
+      });
+    });
+
+    document.querySelector("#mesures").innerHTML = mesures.map(m => `
+      <tr><td>${m.capteur}</td><td>${m.type}</td>
+      <td>${m.valeur}</td><td>${new Date(m.date).toLocaleString()}</td></tr>
+    `).join("");
+
+    document.querySelector("#table-alertes").innerHTML =
+      alertes.items.map(a => `
+        <tr><td>${a.capteur_id}</td><td>${a.type}</td>
+        <td>${new Date(a.date_detection).toLocaleString()}</td>
+        <td class="active">${a.statut}</td></tr>
+      `).join("") || "<tr><td colspan='4'>Aucune alerte active</td></tr>";
+
+    document.querySelector("#status").textContent =
+      "Dernière actualisation : " + new Date().toLocaleString();
+  } catch (error) {
+    document.querySelector("#status").textContent = "Erreur : " + error.message;
+  }
+}
+
+charger();
+setInterval(charger, 30000);
+</script>
+</body>
+</html>

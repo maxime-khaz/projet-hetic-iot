@@ -6,7 +6,7 @@ from typing import Literal
 from bson import ObjectId
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
@@ -32,7 +32,6 @@ async def lifespan(app):
         client.admin.command("ping")
         database = client.get_default_database()
 
-        # Accélère la recherche de la dernière mesure par capteur/type.
         database.mesures_brutes.create_index(
             [
                 ("capteur_id", 1),
@@ -56,11 +55,21 @@ app = FastAPI(
 )
 
 
+@app.get("/dashboard", include_in_schema=False)
+def dashboard():
+    return FileResponse(
+        "/app/src/dashboard.html",
+        media_type="text/html",
+    )
+
+
 @app.exception_handler(PyMongoError)
 async def database_error(request, exception):
     return JSONResponse(
         status_code=503,
-        content={"detail": "La base de données est temporairement indisponible"},
+        content={
+            "detail": "La base de données est temporairement indisponible"
+        },
     )
 
 
@@ -78,11 +87,13 @@ def serialize(value):
 def utc(value):
     if value is None:
         return None
+
     if value.tzinfo is None:
         raise HTTPException(
             status_code=422,
             detail="Les dates doivent préciser un fuseau, par exemple Z pour UTC",
         )
+
     return value.astimezone(timezone.utc)
 
 
@@ -97,16 +108,17 @@ def period_filter(start, end):
         )
 
     result = {}
+
     if start is not None:
         result["$gte"] = start
+
     if end is not None:
         result["$lt"] = end
+
     return result
 
 
 def paginated(collection, filters, sort, page, page_size):
-    # Une ligne supplémentaire permet de savoir s'il existe
-    # une page suivante sans compter toute la collection.
     rows = list(
         collection.find(filters)
         .sort(sort)
@@ -138,9 +150,16 @@ def sensors():
     for sensor in sensor_ids:
         latest = {}
 
-        for measure_type in ("temperature", "humidite", "vibration"):
+        for measure_type in (
+            "temperature",
+            "humidite",
+            "vibration",
+        ):
             document = collection.find_one(
-                {"capteur_id": sensor, "type": measure_type},
+                {
+                    "capteur_id": sensor,
+                    "type": measure_type,
+                },
                 {
                     "_id": 0,
                     "valeur": 1,
@@ -151,13 +170,16 @@ def sensors():
                 sort=[("event_time", -1)],
                 max_time_ms=10000,
             )
+
             if document is not None:
                 latest[measure_type] = document
 
-        result.append({
-            "capteur_id": sensor,
-            "dernieres_mesures": latest,
-        })
+        result.append(
+            {
+                "capteur_id": sensor,
+                "dernieres_mesures": latest,
+            }
+        )
 
     return serialize(result)
 
@@ -177,13 +199,18 @@ def sensor_aggregates(
         filters["type"] = type
 
     period = period_filter(debut, fin)
+
     if period:
         filters["fenetre_debut"] = period
 
     return paginated(
         database().agregats,
         filters,
-        [("fenetre_debut", -1), ("type", 1), ("_id", 1)],
+        [
+            ("fenetre_debut", -1),
+            ("type", 1),
+            ("_id", 1),
+        ],
         page,
         page_size,
     )
@@ -203,19 +230,25 @@ def alerts(
 
     if statut is not None:
         filters["statut"] = statut
+
     if capteur_id is not None:
         filters["capteur_id"] = capteur_id
+
     if type is not None:
         filters["type"] = type
 
     period = period_filter(debut, fin)
+
     if period:
         filters["date_detection"] = period
 
     return paginated(
         database().alertes,
         filters,
-        [("date_detection", -1), ("_id", 1)],
+        [
+            ("date_detection", -1),
+            ("_id", 1),
+        ],
         page,
         page_size,
     )
@@ -233,15 +266,21 @@ def consolidations(
 
     if jour is not None:
         filters["jour"] = jour.isoformat()
+
     if capteur_id is not None:
         filters["capteur_id"] = capteur_id
+
     if type is not None:
         filters["type"] = type
 
     return paginated(
         database().consolidations_quotidiennes,
         filters,
-        [("jour", -1), ("capteur_id", 1), ("type", 1)],
+        [
+            ("jour", -1),
+            ("capteur_id", 1),
+            ("type", 1),
+        ],
         page,
         page_size,
     )
