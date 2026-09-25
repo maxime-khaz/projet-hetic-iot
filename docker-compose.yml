@@ -80,6 +80,25 @@ services:
     restart: unless-stopped
     networks: [iot-net]
 
+  service-api:
+    build: ./api
+    init: true
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      MONGO_URL: mongodb://service-db:27017/iot
+    depends_on:
+      service-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3001/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+    networks: [iot-net]
+
   service-spark:
     build: ./spark
     init: true
