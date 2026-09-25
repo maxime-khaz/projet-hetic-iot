@@ -59,6 +59,7 @@ services:
 
   service-spark:
     build: ./spark
+    init: true
     environment:
       KAFKA_BOOTSTRAP: service-kafka:9092
       MONGO_URL: mongodb://service-db:27017/iot
